@@ -143,7 +143,7 @@ def Export(filepath, obj, armature_obj):
     if rigged:
         for bone in armature.bones:
             model["vertices"].append(util.export_vector(bone.head_local))
-            model["vertex_label"].append(bone["label"])
+            model["vertex_label"].append(255 - bone["label"])
             
     uv_layer = mesh.uv_layers.active.data
     
