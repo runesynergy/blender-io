@@ -5,7 +5,7 @@ import json
 import math
 
 from mathutils import Vector
-from bpy.types import Operator
+from bpy.types import Operator, Panel, UIList
 from bpy.props import *
 from bpy_extras.io_utils import ImportHelper, ExportHelper
 
@@ -168,23 +168,24 @@ def Export(filepath, obj, armature_obj):
         
         model["face_color"].append(int(u + (v * 128)))
 
-        alpha = 0
+        transparency = 0
         material_index = face.material_index
+        
+        # We base face label on the material it's assigned.
+        model["face_label"].append(material_index)
+
         if material_index < len(obj.material_slots):
-            nodes = obj.material_slots[material_index].material.node_tree.nodes
-            shader = nodes.get("Principled BSDF")
-            if shader:
-                alpha = 255 - int(shader.inputs["Alpha"].default_value * 255.0)
+            material = obj.material_slots[material_index].material
 
-        model["face_alpha"].append(alpha)
+            if material:
+                transparency = 255 - int(material.base_alpha * 255)
+            
 
+        model["face_alpha"].append(transparency)
+        
         # TODO: pray for blender to allow multipass viewport compositing
         layer = 0
         model["face_layer"].append(layer)
-
-        # TODO: alpha animations
-        label = 0
-        model["face_label"].append(label)
         
     with open(filepath, "w") as file:
         json.dump(model, file)
@@ -319,10 +320,151 @@ class RS_OT_ExportModel(Operator, ExportHelper):
         armature_obj = obj.find_armature()
         return Export(self.filepath, obj, armature_obj)
 
+class RS_UL_FaceGroups(UIList):
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        if item.material:
+            row = layout.row(align=True)
+            row.prop(item.material, "name", text="", icon="FACE_MAPS", emboss=False)
+        else:
+            layout.label(text="Invalid Slot")
+
+class RS_OT_FaceGroup_Create(Operator):
+    """Create"""
+
+    bl_idname = "facegroup.create"
+    bl_label = "Create"
+
+    def execute(self, context):
+        print("eep")
+        return {'FINISHED'}
+
+class RS_OT_FaceGroup_Delete(Operator):
+    """Delete"""
+    
+    bl_idname = "facegroup.delete"
+    bl_label = "Delete"
+    
+    def execute(self, context):
+        print("eep")
+        return {'FINISHED'}
+
+class RS_OT_FaceGroup_Assign(Operator):
+    """Assigns the selected faces to the active face group"""
+
+    bl_idname = "facegroup.assign"
+    bl_label = "Assign"
+
+    def execute(self, context):
+        print("eep")
+        return {'FINISHED'}
+
+class RS_OT_FaceGroup_Select(Operator):
+    """Selects all the faces in the active face group"""
+    bl_idname = "facegroup.select"
+    bl_label = "Select"
+    
+    def execute(self, context):
+        return {'FINISHED'}
+    
+class RS_OT_FaceGroup_Deselect(Operator):
+    """Deselects all the faces in the active face group"""
+    bl_idname = "facegroup.deselect"
+    bl_label = "Deselect"
+    
+    def execute(self, context):
+        return {'FINISHED'}
+
+class RS_PT_FaceGroups(Panel):
+    bl_label = "Face Groups"
+    bl_idname = "RS_PT_FaceGroups"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Rune Synergy"
+    bl_label = "Face Groups"
+
+    @classmethod
+    def poll(cls, context):
+        return context.object and context.object.type == 'MESH'
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.object
+
+        row = layout.row()
+        col = row.column()
+
+        col.template_list("RS_UL_FaceGroups", "", obj, "material_slots", obj, "active_material_index")
+        
+        col = row.column(align=True)
+        col.operator("facegroup.create", icon='ADD', text="")
+        col.operator("facegroup.delete", icon='REMOVE', text="")
+
+        if context.object.mode == 'EDIT':
+            row = layout.row(align=True)
+            row.operator("facegroup.assign", text="Assign")
+            row.operator("facegroup.select", text="Select")
+            row.operator("facegroup.deselect", text="Deselect")
+
+        active_index = obj.active_material_index
+
+        if active_index < len(obj.material_slots):
+            slot = obj.material_slots[active_index]
+            material = slot.material
+            if material:
+                layout.prop(material, "base_alpha", text="Base Alpha", emboss=True, slider=True)
+
+                alpha_node = get_material_alpha_node(material)
+
+                if alpha_node:
+                    layout.label(text="Use the following slider for animating")
+                    layout.prop(alpha_node, "default_value", text="Current Alpha", emboss=True, slider=True)
+                
+                layout.prop(material, "double_sided")
+
+def on_frame_change_pre(scene):
+    print(scene)
+
+def get_material_alpha_node(material):
+    tree = material.node_tree
+    if tree:
+        node = tree.nodes.get("Principled BSDF")
+        if node:
+            return node.inputs.get("Alpha")
+    return None
+
+def material_base_alpha_update(self, context):
+    if self.base_alpha == 1:
+        self.blend_method = 'OPAQUE'
+    else:
+        self.blend_method = 'BLEND'
+    self.node_tree.nodes["Principled BSDF"].inputs.get("Alpha").default_value = self.base_alpha
+    
+def material_double_sided_update(self, context):
+    self.use_backface_culling = not self.double_sided
+    self.show_transparent_back = self.double_sided
+        
+__hooks__ = {
+    'render_pre': [on_frame_change_pre],
+}
+        
 __classes__ = (
     RS_OT_ImportModel,
     RS_OT_ExportModel,
+    RS_OT_FaceGroup_Create,
+    RS_OT_FaceGroup_Delete,
+    RS_OT_FaceGroup_Assign,
+    RS_OT_FaceGroup_Select,
+    RS_OT_FaceGroup_Deselect,
+    RS_UL_FaceGroups,
+    RS_PT_FaceGroups,
 )
+
+__properties__ = {
+    bpy.types.Material: {
+        "base_alpha": FloatProperty(name="Base Alpha", description="The alpha values the triangles assigned to this group will begin with", default=1, min=0, max=1, update=material_base_alpha_update),
+        "double_sided": BoolProperty(name="Double Sided", description="Shows backfaces and allows translucent faces of the same group to be seen through each other", default=False, update=material_double_sided_update),
+    }
+}
 
 __extensions__ = {
     bpy.types.TOPBAR_MT_file_import: [lambda self, context: self.layout.operator(RS_OT_ImportModel.bl_idname)],

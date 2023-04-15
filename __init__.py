@@ -45,7 +45,9 @@ def register():
                     type.append(extension)
             
         if hasattr(module, "__hooks__"):
-            print(module.__hooks__)
+            for type, hooks in module.__hooks__.items():
+                for hook in hooks:
+                    getattr(bpy.app.handlers, type).append(hook)
 
 def unregister():
     for module in __modules_:
@@ -64,6 +66,11 @@ def unregister():
                 for extension in extensions:
                     type.remove(extension)
 
+        if hasattr(module, "__hooks__"):
+            for type, hooks in module.__hooks__.items():
+                for hook in hooks:
+                    getattr(bpy.app.handlers, type).remove(hook)
+                    
 
 if __name__ == "__main__":
     register()
