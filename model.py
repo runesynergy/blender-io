@@ -147,46 +147,62 @@ def Export(filepath, obj, armature_obj):
             
     uv_layer = mesh.uv_layers.active.data
     
+    backfaces = []
+    
     for face in mesh.polygons:
-        vertices = face.vertices
-        a = vertices[0]
-        b = vertices[1]
-        c = vertices[2]
-
-        model["faces"].append([a,b,c])
-
         type = 1
 
         if face.use_smooth:
             type = 0
         
-        model["face_type"].append(type)
-        
         uv = uv_layer[face.loop_start].uv
         u = int(uv[0] * 128)
         v = 511 - int(uv[1] * 512)
-        
-        model["face_color"].append(int(u + (v * 128)))
+        color = int(u + (v * 128))
 
         transparency = 0
         material_index = face.material_index
+        double_sided = False
         
-        # We base face label on the material it's assigned.
-        model["face_label"].append(material_index)
-
         if material_index < len(obj.material_slots):
             material = obj.material_slots[material_index].material
-
             if material:
                 transparency = 255 - int(material.base_alpha * 255)
-            
+            if material.double_sided:
+                double_sided = True
 
+        layer = 0 # TODO: pray for blender to allow multipass viewport compositing
+        
+        model["faces"].append(face.vertices[:])
+        model["face_type"].append(type)
+        model["face_color"].append(color)
+        model["face_label"].append(material_index)
         model["face_alpha"].append(transparency)
-        
-        # TODO: pray for blender to allow multipass viewport compositing
-        layer = 0
         model["face_layer"].append(layer)
+
+        if double_sided:
+            a = face.vertices[0]
+            b = face.vertices[1]
+            c = face.vertices[2]
+            
+            backfaces.append({
+                "vertices": [c, b, a], # reverse winding
+                "type": type,
+                "color": color,
+                "label": material_index,
+                "transparency": transparency,
+                "layer": layer,
+            })
+
+    for face in backfaces:
+        model["faces"].append(face["vertices"])
+        model["face_type"].append(face["type"])
+        model["face_color"].append(face["color"])
+        model["face_label"].append(face["label"])
+        model["face_alpha"].append(face["transparency"])
+        model["face_layer"].append(face["layer"])
         
+    
     with open(filepath, "w") as file:
         json.dump(model, file)
     
@@ -421,9 +437,6 @@ class RS_PT_FaceGroups(Panel):
                 
                 layout.prop(material, "double_sided")
 
-def on_frame_change_pre(scene):
-    print(scene)
-
 def get_material_alpha_node(material):
     tree = material.node_tree
     if tree:
@@ -443,10 +456,6 @@ def material_double_sided_update(self, context):
     self.use_backface_culling = not self.double_sided
     self.show_transparent_back = self.double_sided
         
-__hooks__ = {
-    'render_pre': [on_frame_change_pre],
-}
-        
 __classes__ = (
     RS_OT_ImportModel,
     RS_OT_ExportModel,
@@ -461,7 +470,7 @@ __classes__ = (
 
 __properties__ = {
     bpy.types.Material: {
-        "base_alpha": FloatProperty(name="Base Alpha", description="The alpha values the triangles assigned to this group will begin with", default=1, min=0, max=1, update=material_base_alpha_update),
+        "base_alpha": FloatProperty(name="Base Alpha", description="The alpha values the triangles assigned to this group will begin with", default=1, min=0, max=1,precision=3, update=material_base_alpha_update),
         "double_sided": BoolProperty(name="Double Sided", description="Shows backfaces and allows translucent faces of the same group to be seen through each other", default=False, update=material_double_sided_update),
     }
 }
