@@ -1,0 +1,95 @@
+syntax = "proto3";
+
+option go_package = "assets.runesynergy.dev";
+option java_package = "dev.runesynergy.assets";
+
+message Vertex {
+    sint32 x = 1;
+    sint32 y = 2;
+    sint32 z = 3;
+    uint32 label = 4;
+}
+
+message Face {
+    uint32 a = 1;
+    uint32 b = 2;
+    uint32 c = 3;
+    uint32 label = 4;
+    uint32 color = 5;
+    uint32 transparency = 6;
+    bool smooth = 7;
+    uint32 texture_face_id = 8;
+}
+
+message TextureFace {
+    uint32 a = 1;
+    uint32 b = 2;
+    uint32 c = 3;
+}
+
+message Mesh {
+    repeated Vertex vertices = 1;
+    repeated Face faces = 2;
+    repeated TextureFace texture_faces = 3;
+}
+
+message Rig {
+    repeated VertexGroup vertex_groups = 1;
+    repeated FaceGroup face_groups = 2;
+}
+
+message VertexGroup {
+    string name = 1;
+    bool inherit_scale = 2;
+    repeated uint32 origin_labels = 3;
+    repeated uint32 labels = 4;
+    repeated string children = 5;
+}
+
+message FaceGroup {
+    string name = 1;
+    repeated uint32 labels = 2;
+}
+
+message Animation {
+    repeated AnimationFrameRef frames = 1;
+    repeated uint32 skip_bases = 2;
+    optional AnimationLoop loop = 3;
+    optional AnimationOverrides overrides = 4;
+    uint32 priority = 5;
+    bool stretch = 6;
+}
+
+message AnimationFrameRef {
+    uint32 primary_frame_id = 1;
+    uint32 secondary_frame_id = 2;
+    uint32 duration = 3;
+}
+
+message AnimationLoop {
+    uint32 offset_from_end = 1;
+    uint32 count = 2;
+}
+
+message AnimationOverrides {
+    optional uint32 player_right_hand = 1;
+    optional uint32 player_left_hand = 2;
+}
+
+message AnimationFrame {
+    map<string, AnimationTransform> transforms = 1;
+    map<string, sint32> alphas = 2;
+    uint32 duration = 3;
+}
+
+message AnimationTransform {
+    optional Vector rotate = 1;
+    optional Vector translate = 2;
+    optional Vector scale = 3;
+}
+
+message Vector {
+    sint32 x = 1;
+    sint32 y = 2;
+    sint32 z = 3;
+}

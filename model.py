@@ -5,7 +5,7 @@ import json
 import math
 
 from mathutils import Vector
-from bpy.types import Operator, Panel, UIList
+from bpy.types import Operator, Panel, UIList, PropertyGroup
 from bpy.props import *
 from bpy_extras.io_utils import ImportHelper, ExportHelper
 
@@ -24,93 +24,97 @@ def Import(context, filepath):
     name = util.filename_without_extension(filepath)
 
     mesh = bpy.data.meshes.new(name)
-    obj = bpy.data.objects.new(name, mesh)
+    mesh.import_path = filepath
 
+    obj = bpy.data.objects.new(name, mesh)
     context.collection.objects.link(obj)
     context.view_layer.objects.active = obj
 
     bm = bmesh.new()
-
+    
     label_layer = bm.verts.layers.int.new("label")
     
-    for vertex in data["vertices"]:
+    for index, vertex in enumerate(data["vertices"]):
         x = vertex[0]
         y = vertex[2]
         z = -vertex[1]
-        bm.verts.new((x,y,z))
+        
+        v = bm.verts.new((x,y,z))
+        v[label_layer] = data["vertex_label"][index]        
     bm.verts.ensure_lookup_table()
 
-    for vertex_index, label in enumerate(data["vertex_label"]):
-        bm.verts[vertex_index][label_layer] = label
+    uv_layer = bm.loops.layers.uv.get("color")
 
-    for face in data["faces"]:
-        bm.faces.new([bm.verts[i] for i in face])
-    bm.faces.ensure_lookup_table()
-    bm.faces.index_update()
+    if not uv_layer:
+        uv_layer = bm.loops.layers.uv.new("color")
 
-    uv_layer = bm.loops.layers.uv.new("color")
-
-    for face in bm.faces:
-        face_type = data["face_type"][face.index]
-        # TODO: custom face type importers? face_impoter[face_type]
-        if face_type == 0:
-            face.smooth = True
-        elif face_type == 1:
-            face.smooth = False
-        color = data["face_color"][face.index]
+    materials = {}
+    
+    for index, face in enumerate(data["faces"]):
+        type = data["face_type"][index]
+        color = data["face_color"][index]
+        alpha = data["face_alpha"][index]
+        double_sided = data["face_double_sided"][index]
+                
         u = ((color % 128.0) + 0.5) / 128.0
-        v = (512.0 - ((color / 128.0) + 0.5)) / 512.0
-        for loop in face.loops:
+        v = ((color / 128.0)) / 512.0
+        v = 1.0 - v
+        
+        f = bm.faces.new([bm.verts[i] for i in face])
+        f.smooth = type & 1 == 0
+        
+        for loop in f.loops:
             loop[uv_layer].uv = (u, v)
 
-    transparents = {}
+        facegroup = "{}".format(alpha)
+        if double_sided:
+            facegroup += "_DS"
+        material = materials.get(facegroup)
+        
+        if not material:
+            material = create_facegroup(obj, facegroup, alpha)
+            if double_sided:
+                material.double_sided = True
+            materials[facegroup] = material
 
-    for face_index, transparency in enumerate(data["face_alpha"]):
-        if transparency not in transparents:
-            transparents[transparency] = []
-        transparents[transparency].append(face_index)
-
-    for transparency, face_indices in transparents.items():
-        palette = get_palette(transparency)
-        obj.data.materials.append(palette)
-        material_index = obj.material_slots.find(palette.name)
-
-        for face_index in face_indices:
-            bm.faces[face_index].material_index = material_index
+        material_index = obj.material_slots.find(material.name)
+        f.material_index = material_index
+        
+    bm.faces.ensure_lookup_table()
+    bm.faces.index_update()
             
-
     bm.to_mesh(mesh)
     bm.free()
+
     mesh.update()
 
     return {'FINISHED'}
 
-def Export(filepath, obj, armature_obj):
+def Export(context, filepath):
     bpy.ops.object.mode_set(mode='OBJECT')
 
-    rigged = False
-    armature = None
+    obj = context.active_object
+
+    if not obj:
+        return {'CANCELLED'}
+    
+    mesh = obj.data
+
+    if not mesh:
+        print("Unable to export model: no mesh")
+        return {'CANCELLED'}
+
+    armature_obj = obj.find_armature()
+    armature = None    
     
     if armature_obj:
         armature = armature_obj.data
-
-        if not armature:
-            print("Unable to export model: provided armature object has no armature")
-            return {'CANCELLED'}
-        
-        rigged = True
 
         for bone_index, bone in enumerate(armature.bones):
             if not "origin" in bone:
                 bone["origin"] = 255 - bone_index
             if not "label" in bone:
                 bone["label"] = bone_index
-
-    mesh = obj.data
-
-    if not mesh:
-        print("Unable to export model: no mesh")
-        return {'CANCELLED'}
 
     model = {
         "vertices": [],
@@ -127,7 +131,7 @@ def Export(filepath, obj, armature_obj):
     for vertex in mesh.vertices:
         label = 0
 
-        if rigged:
+        if armature:
             bone = None
             for vertex_group in vertex.groups:
                 if vertex_group.weight > 0.5:
@@ -140,7 +144,7 @@ def Export(filepath, obj, armature_obj):
         model["vertices"].append(util.export_vector(vertex.co))
         model["vertex_label"].append(label)
 
-    if rigged:
+    if armature:
         for bone in armature.bones:
             model["vertices"].append(util.export_vector(bone.head_local))
             model["vertex_label"].append(255 - bone["label"])
@@ -202,9 +206,9 @@ def Export(filepath, obj, armature_obj):
         model["face_alpha"].append(face["transparency"])
         model["face_layer"].append(face["layer"])
         
-    
     with open(filepath, "w") as file:
-        json.dump(model, file)
+        if mode == 'JSON':
+            json.dump(model, file)    
     
     return {'FINISHED'}
 
@@ -219,72 +223,37 @@ def load_image(image_path):
 
     return image
 
-def get_palette(transparency):
-    opaque_material = bpy.data.materials.get("OPAQUE")
+def create_facegroup(obj, name, transparency):
+    material = bpy.data.materials.new(name)
+    obj.data.materials.append(material)
 
-    if not opaque_material:
-        opaque_material = bpy.data.materials.new("OPAQUE")
-        opaque_material.use_nodes = True
-        opaque_material.use_backface_culling = True
-        shader_node_tree = opaque_material.node_tree
-        nodes = shader_node_tree.nodes
-        nodes.clear()
-        diffuse_node = nodes.new(type='ShaderNodeBsdfDiffuse')
-        diffuse_node.location = (0, 0)
-        diffuse_node.inputs["Roughness"].default_value = 1
-        output_node = nodes.new(type='ShaderNodeOutputMaterial')
-        output_node.location = (300, 0)
-        texture_node = nodes.new(type='ShaderNodeTexImage')
-        texture_node.location = (-300, 0)
-        texture_node.interpolation = 'Closest'
-        texture_node.image = load_image("palette.png")
-        links = shader_node_tree.links
-        links.new(texture_node.outputs['Color'], diffuse_node.inputs['Color'])
-        links.new(diffuse_node.outputs['BSDF'], output_node.inputs['Surface'])
-    
-    if transparency == 0:
-        return opaque_material
-
-    alpha = 255 - transparency
-
-    name = "ALPHA_{}".format(alpha)
-    transparent_material = bpy.data.materials.get(name)
-    
-    if transparent_material:
-        return transparent_material
-    
-    transparent_material = bpy.data.materials.new(name)
-    transparent_material.use_nodes = True
-    transparent_material.use_backface_culling = True
-    transparent_material.blend_method = 'BLEND'
-    shader_node_tree = transparent_material.node_tree
+    material.use_nodes = True
+    material.use_backface_culling = True
+    material.blend_method = 'BLEND'
+    material.base_alpha = (255 - transparency) / 255
+    shader_node_tree = material.node_tree
     nodes = shader_node_tree.nodes
     nodes.clear()
     
-    principled_node = nodes.new(type='ShaderNodeBsdfPrincipled')
-    principled_node.location = (0, 0)
-    principled_node.inputs["Specular"].default_value = 0
-    principled_node.inputs["Roughness"].default_value = 1
-    principled_node.inputs["Alpha"].default_value = alpha / 255.0
+    shader_node = nodes.new(type='ShaderNodeBsdfPrincipled')
+    shader_node.location = (0, 0)
+    shader_node.inputs["Specular"].default_value = 0
+    shader_node.inputs["Roughness"].default_value = 1
+    shader_node.inputs["Alpha"].default_value = material.base_alpha
     
     output_node = nodes.new(type='ShaderNodeOutputMaterial')
     output_node.location = (300, 0)
+
     texture_node = nodes.new(type='ShaderNodeTexImage')
     texture_node.location = (-300, 0)
     texture_node.interpolation = 'Closest'
     texture_node.image = load_image("palette.png")
+    
     links = shader_node_tree.links
-    links.new(texture_node.outputs['Color'], principled_node.inputs['Base Color'])
-    links.new(principled_node.outputs['BSDF'], output_node.inputs['Surface'])
+    links.new(texture_node.outputs['Color'], shader_node.inputs['Base Color'])
+    links.new(shader_node.outputs['BSDF'], output_node.inputs['Surface'])
 
-    return transparent_material
-
-
-def apply_palette(obj):
-    if not obj:
-        return {'CANCELLED'}
-    obj.data.materials.append(get_palette(0))
-    return {'FINISHED'}
+    return material
 
 def create_or_update_armature_modifier(target_obj, armature_obj):
     # Ensure that both the target object and armature object exist
@@ -317,6 +286,7 @@ class RS_OT_ImportModel(Operator, ImportHelper):
         maxlen=255,
     )
 
+   
     def execute(self, context):
         return Import(context, self.filepath)
 
@@ -332,36 +302,29 @@ class RS_OT_ExportModel(Operator, ExportHelper):
     )
 
     def execute(self, context):
-        obj = context.active_object
-        armature_obj = obj.find_armature()
-        return Export(self.filepath, obj, armature_obj)
-
-class RS_UL_FaceGroups(UIList):
-    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
-        if item.material:
-            row = layout.row(align=True)
-            row.prop(item.material, "name", text="", icon="FACE_MAPS", emboss=False)
-        else:
-            layout.label(text="Invalid Slot")
+        return Export(context, self.filepath)
 
 class RS_OT_FaceGroup_Create(Operator):
-    """Create"""
+    """Create a new face group"""
 
     bl_idname = "facegroup.create"
-    bl_label = "Create"
+    bl_label = "Create Face Group"
 
     def execute(self, context):
-        print("eep")
+        create_facegroup(context.active_object, "Group", 0)
         return {'FINISHED'}
 
 class RS_OT_FaceGroup_Delete(Operator):
-    """Delete"""
+    """Deletes the active face group. (Note: You should reassign the faces in this group first!)"""
     
     bl_idname = "facegroup.delete"
     bl_label = "Delete"
     
     def execute(self, context):
-        print("eep")
+        mode = context.object.mode
+        bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.ops.object.material_slot_remove()
+        bpy.ops.object.mode_set(mode=mode)
         return {'FINISHED'}
 
 class RS_OT_FaceGroup_Assign(Operator):
@@ -371,7 +334,7 @@ class RS_OT_FaceGroup_Assign(Operator):
     bl_label = "Assign"
 
     def execute(self, context):
-        print("eep")
+        bpy.ops.object.material_slot_assign()
         return {'FINISHED'}
 
 class RS_OT_FaceGroup_Select(Operator):
@@ -380,6 +343,7 @@ class RS_OT_FaceGroup_Select(Operator):
     bl_label = "Select"
     
     def execute(self, context):
+        bpy.ops.object.material_slot_select()
         return {'FINISHED'}
     
 class RS_OT_FaceGroup_Deselect(Operator):
@@ -388,7 +352,15 @@ class RS_OT_FaceGroup_Deselect(Operator):
     bl_label = "Deselect"
     
     def execute(self, context):
+        bpy.ops.object.material_slot_deselect()
         return {'FINISHED'}
+
+class RS_UL_FaceGroups(UIList):
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        if item.material:
+            layout.prop(item.material, "name", text="", icon="FACE_MAPS", emboss=False)
+        else:
+            layout.label(text="Invalid Slot")
 
 class RS_PT_FaceGroups(Panel):
     bl_label = "Face Groups"
@@ -469,6 +441,9 @@ __classes__ = (
 )
 
 __properties__ = {
+    bpy.types.Mesh: {
+        "import_path": StringProperty(name="Import Path", description="The path this mesh was imported from"),
+    },
     bpy.types.Material: {
         "base_alpha": FloatProperty(name="Base Alpha", description="The alpha values the triangles assigned to this group will begin with", default=1, min=0, max=1,precision=3, update=material_base_alpha_update),
         "double_sided": BoolProperty(name="Double Sided", description="Shows backfaces and allows translucent faces of the same group to be seen through each other", default=False, update=material_double_sided_update),

@@ -14,15 +14,17 @@ import os
 import importlib
 
 for filename in [ f for f in os.listdir(os.path.dirname(os.path.realpath(__file__))) if f.endswith(".py") ]:
-	if filename == os.path.basename(__file__): continue
-	module = sys.modules.get("{}.{}".format(__name__,filename[:-3]))
-	if module: importlib.reload(module)
+    if filename == os.path.basename(__file__):
+        continue
+    module = sys.modules.get("{}.{}".format(__name__,filename[:-3]))
+    if module:
+        importlib.reload(module)
 
 # clear out any scene update funcs hanging around, e.g. after a script reload
 for collection in [bpy.app.handlers.depsgraph_update_post, bpy.app.handlers.load_post]:
-	for func in collection:
-		if func.__module__.startswith(__name__):
-			collection.remove(func)
+    for func in collection:
+        if func.__module__.startswith(__name__):
+            collection.remove(func)
 
 from . import model, rig, animation
 __modules_ = (model, rig, animation)
