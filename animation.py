@@ -27,7 +27,7 @@ def get_actions(self, context):
     if armature and armature.type == 'ARMATURE':
         armature_actions = get_armature_actions(armature)
         for action in armature_actions:
-            actions.append((action.name, action.name, ""))
+            actions.append((action.name, action.name, "", 'ACTION', 0))
     else:
         actions.append(('None', "No Armature", ""))
 
@@ -43,7 +43,7 @@ class RS_OT_ExportAnim(Operator, ExportHelper):
         maxlen=255,
     )
     
-    action_list: EnumProperty(name="Animation", items=get_actions)
+    action_list: EnumProperty(name="Action", items=get_actions)
 
     def execute(self, context):
         obj = context.active_object

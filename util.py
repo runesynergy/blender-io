@@ -23,3 +23,9 @@ def export_euler(euler):
 def filename_without_extension(filepath):
     filename, _ = os.path.splitext(os.path.basename(filepath))
     return filename
+
+def export_array(input):
+    array = []
+    for value in input:
+        array.append(value)
+    return array

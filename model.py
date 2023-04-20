@@ -6,7 +6,7 @@ import math
 
 from mathutils import Vector
 from bpy.types import Operator, Panel, UIList, PropertyGroup
-from bpy.props import *
+from bpy.props import StringProperty, FloatProperty, BoolProperty
 from bpy_extras.io_utils import ImportHelper, ExportHelper
 
 from . import util
@@ -275,6 +275,27 @@ def create_or_update_armature_modifier(target_obj, armature_obj):
     # Assign the armature object to the modifier's "Object" field
     armature_modifier.object = armature_obj
 
+def get_label_vertices(mesh):
+    label_vertices = {}
+    label_layer = mesh.vertex_layers_int["label"]
+    if label_layer is None:
+        label_layer = mesh.vertex_layers_int.new(name="label")
+    for index, vertex_data in label_layer.data.items():
+        label = vertex_data.value
+        if label not in label_vertices:
+            label_vertices[label] = []
+        label_vertices[label].append(mesh.vertices[index])
+    return label_vertices
+
+def get_label_median(label_vertices, labels):
+    vertices = []
+    for label in labels:
+        if label in label_vertices:
+            vertices.extend([v.co for v in label_vertices[label]])
+    if len(vertices) == 0:
+        return Vector((0,0,0))
+    return sum(vertices, Vector((0,0,0))) / len(vertices)
+
 class RS_OT_ImportModel(Operator, ImportHelper):
     """Nothing"""
     bl_idname = "rs.import_model"
@@ -285,7 +306,6 @@ class RS_OT_ImportModel(Operator, ImportHelper):
         options={'HIDDEN'},
         maxlen=255,
     )
-
    
     def execute(self, context):
         return Import(context, self.filepath)
